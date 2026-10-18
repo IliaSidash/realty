@@ -10,7 +10,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const DEFAULTS = {
   down: 30, rate: 5, term: 25, costs: 20, pmin: 200000, pmax: 260000, sea: '',
-  cities: null, beds: [], onlyCovered: true, hideOffplan: true, likely: true, sort: 'surplus',
+  cities: null, beds: [], onlyCovered: true, hideOffplan: true, likely: true, onlyReady: false, sort: 'surplus',
 };
 const PAGE = 40;
 const COLUMNS =
@@ -97,6 +97,7 @@ function visible() {
     .filter((l) => sea === null || (l.sea_km !== null && l.sea_km <= sea))
     .filter((l) => settings.likely || l.age_verdict === 'young')
     .filter((l) => !settings.hideOffplan || !['off_plan', 'removed', 'old'].includes(l.photo_verdict))
+    .filter((l) => !settings.onlyReady || l.photo_verdict === 'ready')
     .map((l) => ({ ...l, ...evaluate(l) }))
     .filter((l) => !settings.onlyCovered || l.surplus >= 0)
     .sort({
@@ -206,7 +207,7 @@ function bindInputs() {
       }
     });
   }
-  for (const [id, key] of [['only-covered', 'onlyCovered'], ['hide-offplan', 'hideOffplan'], ['likely', 'likely']]) {
+  for (const [id, key] of [['only-covered', 'onlyCovered'], ['hide-offplan', 'hideOffplan'], ['likely', 'likely'], ['only-ready', 'onlyReady']]) {
     $(id).checked = settings[key];
     $(id).addEventListener('change', () => { settings[key] = $(id).checked; saveSettings(); shown = PAGE; render(); });
   }
