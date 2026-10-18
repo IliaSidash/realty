@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Квартиры под сдачу</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>Квартиры под сдачу</h1>
+    <span id="who" class="muted"></span>
+    <button id="logout" type="button" class="link" hidden>Выйти</button>
+  </header>
+
+  <!-- Sign-in: Supabase sends a one-time link to the e-mail. -->
+  <section id="login" class="login" hidden>
+    <h2>Вход</h2>
+    <p class="muted">Пришлём ссылку для входа на почту. Данные видны только разрешённым адресам.</p>
+    <form id="login-form">
+      <label for="email">Почта</label>
+      <input id="email" type="email" required autocomplete="email" placeholder="you@example.com">
+      <button type="submit">Прислать ссылку</button>
+    </form>
+    <p id="login-msg" class="msg" role="status"></p>
+  </section>
+
+  <main id="app" hidden>
+    <aside class="filters" aria-label="Параметры">
+      <fieldset>
+        <legend>Ипотека и расходы</legend>
+        <label for="down">Взнос, %</label><input id="down" type="number" min="0" max="100" step="5">
+        <label for="rate">Ставка, % годовых</label><input id="rate" type="number" min="0" max="20" step="0.1">
+        <label for="term">Срок, лет</label><input id="term" type="number" min="5" max="40" step="1">
+        <label for="costs">Расходы, % аренды</label><input id="costs" type="number" min="0" max="60" step="1">
+      </fieldset>
+      <fieldset>
+        <legend>Квартира</legend>
+        <label for="pmin">Цена от, €</label><input id="pmin" type="number" min="0" step="5000">
+        <label for="pmax">Цена до, €</label><input id="pmax" type="number" min="0" step="5000">
+        <span class="label">Город</span>
+        <div id="cities" class="chips"></div>
+        <span class="label">Спальни</span>
+        <div id="beds" class="chips"></div>
+        <label for="sea">До моря не дальше, км</label><input id="sea" type="number" min="0" max="50" step="0.5" placeholder="любое">
+      </fieldset>
+      <fieldset>
+        <legend>Показывать</legend>
+        <label class="check"><input id="only-covered" type="checkbox"> только где аренда покрывает платёж</label>
+        <label class="check"><input id="hide-offplan" type="checkbox"> скрыть отсеянные по фото (строится, снято)</label>
+        <label class="check"><input id="likely" type="checkbox"> включать «новое, год не указан»</label>
+      </fieldset>
+      <p class="muted small">Аренда — оценка модели по похожим квартирам. Платёж — аннуитет. Расходы покрывают простой, управление, ремонт; налоги не учтены.</p>
+    </aside>
+
+    <section class="results">
+      <div class="toolbar">
+        <span id="count" class="muted"></span>
+        <div class="toolbar-right">
+          <select id="sort" aria-label="Сортировка">
+            <option value="surplus">Больше остаток</option>
+            <option value="yield">Выше доходность</option>
+            <option value="price">Дешевле</option>
+            <option value="sea">Ближе к морю</option>
+            <option value="new">Новые объявления</option>
+          </select>
+          <button id="toggle-map" type="button">Карта</button>
+        </div>
+      </div>
+      <div id="map" hidden></div>
+      <div id="list" class="list"></div>
+      <button id="more" type="button" class="more" hidden>Показать ещё</button>
+    </section>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
