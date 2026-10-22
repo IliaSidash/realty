@@ -9,10 +9,11 @@ const SUPABASE_KEY = 'sb_publishable_TDyTWs5gCEBbjENCmG1S-A_cqhLLSr8';
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const DEFAULTS = {
-  down: 30, rate: 5, term: 25, costs: 20, pmin: 200000, pmax: 260000, sea: '',
+  down: 30, rate: 5, term: 25, costs: 20, pmin: 150000, pmax: 300000, sea: '', minSurplus: -100,
   cities: null, beds: [], onlyCovered: true, hideOffplan: true, likely: true, onlyReady: false, sort: 'surplus',
 };
 const PAGE = 40;
+const SETTINGS_KEY = 'settings-v2';
 const COLUMNS =
   'id,title,price,sqm,bedrooms,city,district,url,lat,lng,est_rent,est_rent_low,est_rent_high,est_basis,' +
   'sea_km,build_year,age_verdict,photo_verdict,first_seen_at';
@@ -22,10 +23,10 @@ const eur = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'EUR',
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 function loadSettings() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('settings') ?? '{}') }; } catch { return { ...DEFAULTS }; }
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') }; } catch { return { ...DEFAULTS }; }
 }
 function saveSettings() {
-  try { localStorage.setItem('settings', JSON.stringify(settings)); } catch { /* private mode */ }
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* private mode */ }
 }
 const settings = loadSettings();
 let listings = [];
@@ -99,7 +100,7 @@ function visible() {
     .filter((l) => !settings.hideOffplan || !['off_plan', 'removed', 'old'].includes(l.photo_verdict))
     .filter((l) => !settings.onlyReady || l.photo_verdict === 'ready')
     .map((l) => ({ ...l, ...evaluate(l) }))
-    .filter((l) => !settings.onlyCovered || l.surplus >= 0)
+    .filter((l) => !settings.onlyCovered || l.surplus >= settings.minSurplus)
     .sort({
       surplus: (a, b) => b.surplus - a.surplus,
       yield: (a, b) => b.yieldPct - a.yieldPct,
@@ -191,7 +192,7 @@ function renderMap(list) {
 // --- Wiring ----------------------------------------------------------------------------
 
 function bindInputs() {
-  const fields = { down: 'down', rate: 'rate', term: 'term', costs: 'costs', pmin: 'pmin', pmax: 'pmax', sea: 'sea' };
+  const fields = { down: 'down', rate: 'rate', term: 'term', costs: 'costs', pmin: 'pmin', pmax: 'pmax', sea: 'sea', 'min-surplus': 'minSurplus' };
   let refetch = null;
   for (const [id, key] of Object.entries(fields)) {
     $(id).value = settings[key];
