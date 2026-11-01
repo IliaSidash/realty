@@ -79,7 +79,7 @@ function buildQuery(offset) {
   const f = filters;
   let q = db
     .from('residential_listings')
-    .select(COLUMNS, { count: 'exact' })
+    .select(COLUMNS, { count: 'estimated' })
     .eq('status', 'active')
     .eq('segment', f.segment)
     .eq('listing_type', f.deal);
@@ -226,7 +226,7 @@ function card(l) {
 }
 
 function render() {
-  $('count').textContent = `Найдено ${count.format(total)}, показано ${count.format(loaded.length)}`;
+  $('count').textContent = `Найдено ≈${count.format(total)}, показано ${count.format(loaded.length)}`;
   $('list').innerHTML = loaded.length
     ? loaded.map(card).join('')
     : '<div class="empty">Ничего не найдено. Ослабьте фильтры.</div>';
