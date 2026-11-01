@@ -3,19 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Квартиры под сдачу</title>
+  <title>Недвижимость Кипра</title>
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="bar">
-    <h1>Квартиры под сдачу</h1>
+    <h1>Недвижимость Кипра</h1>
     <span id="who" class="muted"></span>
     <button id="logout" type="button" class="link" hidden>Выйти</button>
   </header>
 
-  <!-- Sign-in: Supabase sends a one-time link to the e-mail. -->
   <section id="login" class="login" hidden>
     <h2>Вход</h2>
     <p class="muted">Пришлём ссылку для входа на почту. Данные видны только разрешённым адресам.</p>
@@ -28,34 +27,80 @@
   </section>
 
   <main id="app" hidden>
-    <aside class="filters" aria-label="Параметры">
+    <aside class="filters" aria-label="Фильтры">
       <fieldset>
-        <legend>Ипотека и расходы</legend>
-        <label for="down">Взнос, %</label><input id="down" type="number" min="0" max="100" step="5">
-        <label for="rate">Ставка, % годовых</label><input id="rate" type="number" min="0" max="20" step="0.1">
-        <label for="term">Срок, лет</label><input id="term" type="number" min="5" max="40" step="1">
-        <label for="costs">Расходы, % аренды</label><input id="costs" type="number" min="0" max="60" step="1">
+        <legend>Что ищем</legend>
+        <div id="segment" class="chips"></div>
+        <div id="deal" class="chips"></div>
       </fieldset>
+
       <fieldset>
-        <legend>Квартира</legend>
-        <label for="pmin">Цена от, €</label><input id="pmin" type="number" min="0" step="5000">
-        <label for="pmax">Цена до, €</label><input id="pmax" type="number" min="0" step="5000">
+        <legend>Где</legend>
         <span class="label">Город</span>
         <div id="cities" class="chips"></div>
-        <span class="label">Спальни</span>
-        <div id="beds" class="chips"></div>
+        <label for="district">Район содержит</label><input id="district" type="text" placeholder="например, Germasogeia">
         <label for="sea">До моря не дальше, км</label><input id="sea" type="number" min="0" max="50" step="0.5" placeholder="любое">
       </fieldset>
+
       <fieldset>
-        <legend>Показывать</legend>
-        <label class="check"><input id="only-covered" type="checkbox"> только где аренда покрывает платёж</label>
-        <label for="min-surplus">Остаток не меньше, €/мес (−100 = доплата до €100)</label><input id="min-surplus" type="number" step="50" max="1000">
-        <label class="check"><input id="hide-offplan" type="checkbox"> скрыть отсеянные по фото (строится, снято)</label>
-        <label class="check"><input id="likely" type="checkbox"> включать «новое, год не указан»</label>
-        <label class="check"><input id="only-ready" type="checkbox"> только готовые по фото (проверенные)</label>
-        <label class="check"><input id="only-brand-new" type="checkbox"> только новостройки: состояние «новое», без вторички</label>
+        <legend>Объект</legend>
+        <div class="pair">
+          <div><label for="pmin">Цена от, €</label><input id="pmin" type="number" min="0" step="5000"></div>
+          <div><label for="pmax">до, €</label><input id="pmax" type="number" min="0" step="5000"></div>
+        </div>
+        <div class="pair">
+          <div><label for="smin">Площадь от, м²</label><input id="smin" type="number" min="0" step="5"></div>
+          <div><label for="smax">до, м²</label><input id="smax" type="number" min="0" step="5"></div>
+        </div>
+        <span class="label">Спальни</span>
+        <div id="beds" class="chips"></div>
+        <label for="condition">Состояние</label>
+        <select id="condition">
+          <option value="any">любое</option>
+          <option value="new_build">новостройка (сдана, никто не жил)</option>
+          <option value="resale">вторичка</option>
+          <option value="off_plan">строится</option>
+        </select>
+        <label for="year">Построен не раньше</label><input id="year" type="number" min="1950" max="2030" step="1" placeholder="любой год">
+        <label for="pv">Фотовольтаика</label>
+        <select id="pv">
+          <option value="any">неважно</option>
+          <option value="yes">есть</option>
+          <option value="yes_or_provision">есть или подготовка</option>
+        </select>
+        <label for="vat">НДС</label>
+        <select id="vat">
+          <option value="any">неважно</option>
+          <option value="plus">НДС сверху (явно или вероятно)</option>
+          <option value="none">без НДС (явно или вероятно)</option>
+        </select>
+        <label class="check"><input id="photos-ready" type="checkbox"> только с проверенными реальными фото</label>
+        <label class="check"><input id="hide-rejected" type="checkbox"> скрыть отсеянные по фото (рендеры, стройка, снято)</label>
       </fieldset>
-      <p class="muted small">Аренда — оценка модели по похожим квартирам. Платёж — аннуитет. Расходы покрывают простой, управление, ремонт; налоги не учтены.</p>
+
+      <fieldset>
+        <legend>Свежесть</legend>
+        <label for="days">Появилось за последние, дней</label><input id="days" type="number" min="1" step="1" placeholder="за всё время">
+      </fieldset>
+
+      <details class="calc">
+        <summary>Расчёт ипотеки (квартиры на продажу)</summary>
+        <div class="calc-body">
+          <label for="down">Взнос, %</label><input id="down" type="number" min="0" max="100" step="5">
+          <label for="rate">Ставка, % годовых</label><input id="rate" type="number" min="0" max="20" step="0.1">
+          <label for="term">Срок, лет</label><input id="term" type="number" min="5" max="40" step="1">
+          <label for="costs">Расходы, % аренды</label><input id="costs" type="number" min="0" max="60" step="1">
+          <label for="vat-rate">Если НДС сверху, считать цену</label>
+          <select id="vat-rate">
+            <option value="0">как указана</option>
+            <option value="5">с НДС 5%</option>
+            <option value="19">с НДС 19%</option>
+          </select>
+          <p class="muted small">Аренда — оценка модели по похожим квартирам. Налоги, комиссии и сборы при покупке не учтены.</p>
+        </div>
+      </details>
+
+      <button id="reset" type="button" class="link">Сбросить фильтры</button>
     </aside>
 
     <section class="results">
@@ -63,11 +108,12 @@
         <span id="count" class="muted"></span>
         <div class="toolbar-right">
           <select id="sort" aria-label="Сортировка">
-            <option value="surplus">Больше остаток</option>
-            <option value="yield">Выше доходность</option>
-            <option value="price">Дешевле</option>
+            <option value="newest">Сначала новые объявления</option>
+            <option value="price_asc">Дешевле</option>
+            <option value="price_desc">Дороже</option>
+            <option value="ppsqm">Дешевле за м²</option>
             <option value="sea">Ближе к морю</option>
-            <option value="new">Новые объявления</option>
+            <option value="yield">Выше доходность</option>
           </select>
           <button id="toggle-map" type="button">Карта</button>
         </div>

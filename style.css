@@ -65,12 +65,22 @@ label, .label { font-size: 0.85rem; color: var(--muted); }
 #map { height: 420px; border-radius: 10px; border: 1px solid var(--line); }
 
 .list { display: flex; flex-direction: column; gap: 10px; }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 6px; }
-.card-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-.card-head a { font-weight: 600; text-decoration: none; color: var(--fg); }
-.card-head a:hover { color: var(--accent); text-decoration: underline; }
-.price { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; display: grid; grid-template-columns: 200px minmax(0, 1fr); }
+@media (max-width: 560px) { .card { grid-template-columns: minmax(0, 1fr); } }
+.thumb { display: block; background: var(--chip); min-height: 140px; }
+.thumb img { width: 100%; height: 100%; max-width: 100%; object-fit: cover; display: block; }
+.no-photo { display: grid; place-items: center; height: 100%; min-height: 140px; color: var(--muted); font-size: 0.85rem; }
+.card-body { padding: 12px 14px; display: grid; gap: 6px; min-width: 0; }
+.card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.card-head .title { font-weight: 600; text-decoration: none; color: var(--fg); min-width: 0; flex: 1 1 220px; }
+.card-head .title:hover { color: var(--accent); text-decoration: underline; }
+.prices { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; }
+.price { font-family: var(--mono); font-weight: 600; white-space: nowrap; font-size: 1.05rem; }
+.price small { font-weight: 400; color: var(--muted); }
+.vat-prices { display: flex; flex-wrap: wrap; gap: 2px 10px; justify-content: flex-end; font-size: 0.82rem; }
+.vat-note { font-size: 0.8rem; color: var(--warn); }
 .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.88rem; color: var(--muted); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .money { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 0.9rem; padding-top: 6px; border-top: 1px dashed var(--line); }
 .pill { font-family: var(--mono); font-weight: 600; padding: 2px 9px; border-radius: 999px; }
 .pill.good { background: var(--good-soft); color: var(--good); }
@@ -81,3 +91,10 @@ label, .label { font-size: 0.85rem; color: var(--muted); }
 .history { font-size: 0.85rem; color: var(--muted); }
 .more { align-self: center; background: none; color: var(--accent); }
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pair > div { display: grid; gap: 4px; min-width: 0; }
+.filters .chips + .chips { margin-top: 4px; }
+.calc { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 10px 12px; }
+.calc summary { font-weight: 600; cursor: pointer; }
+.calc-body { display: grid; gap: 6px; margin-top: 8px; }
+select:disabled { opacity: 0.5; }

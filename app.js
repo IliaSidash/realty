@@ -1,118 +1,253 @@
-// Apartments for buy-to-let on Cyprus, read from the scraper's Supabase database.
-// Rent estimates, sea distance and building age come precomputed from the scraper;
-// the mortgage maths runs here so parameters can be changed on the fly.
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/+esm';
 
 const SUPABASE_URL = 'https://fhaudosioofozmdmcmqm.supabase.co';
-// Publishable key: safe in a browser; without a signed-in, allowed e-mail it reads nothing.
-const SUPABASE_KEY = 'sb_publishable_TDyTWs5gCEBbjENCmG1S-A_cqhLLSr8';
-const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_TDyTWs5gCEBbjENCmG1S-A_cqhLLSr8';
+const db = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
-const DEFAULTS = {
-  down: 30, rate: 5, term: 25, costs: 20, pmin: 150000, pmax: 300000, sea: '', minSurplus: -100,
-  cities: null, beds: [], onlyCovered: true, hideOffplan: true, likely: true, onlyReady: false, onlyBrandNew: true, sort: 'surplus',
+const PAGE_SIZE = 40;
+const SETTINGS_KEY = 'marketplace-v1';
+const REFETCH_DELAY_MS = 450;
+const NEW_LISTING_DAYS = 3;
+const CITIES = ['Limassol', 'Larnaca', 'Paphos', 'Nicosia', 'Famagusta'];
+const FOUR_OR_MORE = '4';
+const FOUR_OR_MORE_BEDROOMS = [4, 5, 6, 7, 8, 9, 10, 11, 12];
+const BEDROOM_CHOICES = [['0', 'студия'], ['1', '1'], ['2', '2'], ['3', '3'], [FOUR_OR_MORE, '4+']];
+const VAT_ON_TOP = ['plus', 'likely_plus'];
+const VAT_NONE = ['included', 'likely_none'];
+const PHOTO_REJECTED = ['off_plan', 'removed', 'old'];
+
+const DEFAULT_FILTERS = {
+  segment: 'apartment', deal: 'buy', cities: [], district: '', sea: '',
+  pmin: '', pmax: '', smin: '', smax: '', beds: [], condition: 'any', year: '',
+  pv: 'any', vat: 'any', photosReady: false, hideRejected: true, days: '', sort: 'newest',
 };
-const PAGE = 40;
-const SETTINGS_KEY = 'settings-v2';
-const BRAND_NEW = '10';
-const COLUMNS =
-  'id,title,price,sqm,bedrooms,city,district,url,lat,lng,est_rent,est_rent_low,est_rent_high,est_basis,' +
-  'sea_km,build_year,age_verdict,photo_verdict,first_seen_at,condition:attrs->>attrs__condition';
+const DEFAULT_CALC = { down: 30, rate: 5, term: 25, costs: 20, vatRate: '0' };
+
+const COLUMNS = [
+  'id', 'title', 'segment', 'listing_type', 'property_type', 'price', 'sqm', 'price_per_sqm', 'bedrooms',
+  'city', 'district', 'url', 'lat', 'lng', 'photo_url', 'first_seen_at',
+  'est_rent', 'est_rent_low', 'est_rent_high', 'est_basis', 'est_yield',
+  'sea_km', 'build_year', 'age_verdict', 'photo_verdict', 'is_new_build', 'vat', 'pv',
+].join(',');
 
 const $ = (id) => document.getElementById(id);
 const eur = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+const count = new Intl.NumberFormat('ru-RU');
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 function loadSettings() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') }; } catch { return { ...DEFAULTS }; }
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
+    return { filters: { ...DEFAULT_FILTERS, ...saved.filters }, calc: { ...DEFAULT_CALC, ...saved.calc } };
+  } catch {
+    return { filters: { ...DEFAULT_FILTERS }, calc: { ...DEFAULT_CALC } };
+  }
 }
 function saveSettings() {
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* private mode */ }
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ filters, calc }));
+  } catch {
+    return;
+  }
 }
-const settings = loadSettings();
-let listings = [];
-let shown = PAGE;
+let { filters, calc } = loadSettings();
+let loaded = [];
+let total = 0;
+let requestId = 0;
 let map = null;
 let markers = null;
 
-// --- Money ---------------------------------------------------------------------------
-
 function monthlyPayment(principal, ratePct, years) {
-  const n = years * 12, r = ratePct / 100 / 12;
-  return r === 0 ? principal / n : (principal * r) / (1 - (1 + r) ** -n);
+  const months = years * 12;
+  const monthlyRate = ratePct / 100 / 12;
+  return monthlyRate === 0 ? principal / months : (principal * monthlyRate) / (1 - (1 + monthlyRate) ** -months);
 }
 
-function evaluate(l) {
-  const loan = l.price * (1 - settings.down / 100);
-  const payment = monthlyPayment(loan, settings.rate, settings.term);
-  const netRent = l.est_rent * (1 - settings.costs / 100);
-  return { loan, payment, netRent, surplus: netRent - payment, yieldPct: (l.est_rent * 1200) / l.price };
+function purchasePrice(listing) {
+  const vatRate = Number(calc.vatRate);
+  return VAT_ON_TOP.includes(listing.vat) ? listing.price * (1 + vatRate / 100) : listing.price;
 }
 
-// --- Data ------------------------------------------------------------------------------
+function mortgage(listing) {
+  const price = purchasePrice(listing);
+  const payment = monthlyPayment(price * (1 - calc.down / 100), calc.rate, calc.term);
+  const surplus = listing.est_rent * (1 - calc.costs / 100) - payment;
+  return { price, payment, surplus, yieldPct: (listing.est_rent * 1200) / price };
+}
 
-async function fetchListings() {
+function buildQuery(offset) {
+  const f = filters;
+  let q = db
+    .from('residential_listings')
+    .select(COLUMNS, { count: 'exact' })
+    .eq('status', 'active')
+    .eq('segment', f.segment)
+    .eq('listing_type', f.deal);
+  if (f.cities.length) q = q.in('city', f.cities);
+  if (f.district.trim()) q = q.ilike('district', `%${f.district.trim()}%`);
+  if (f.sea !== '') q = q.lte('sea_km', Number(f.sea));
+  if (f.pmin !== '') q = q.gte('price', Number(f.pmin));
+  if (f.pmax !== '') q = q.lte('price', Number(f.pmax));
+  if (f.smin !== '') q = q.gte('sqm', Number(f.smin));
+  if (f.smax !== '') q = q.lte('sqm', Number(f.smax));
+  if (f.beds.length) q = q.in('bedrooms', f.beds.flatMap((b) => (b === FOUR_OR_MORE ? FOUR_OR_MORE_BEDROOMS : [Number(b)])));
+  if (f.condition === 'new_build') q = q.eq('is_new_build', true).neq('age_verdict', 'off_plan');
+  if (f.condition === 'resale') q = q.eq('is_new_build', false).neq('age_verdict', 'off_plan');
+  if (f.condition === 'off_plan') q = q.eq('age_verdict', 'off_plan');
+  if (f.year !== '') q = q.gte('build_year', Number(f.year));
+  if (f.pv === 'yes') q = q.eq('pv', 'yes');
+  if (f.pv === 'yes_or_provision') q = q.in('pv', ['yes', 'provision']);
+  if (f.deal === 'buy' && f.vat === 'plus') q = q.in('vat', VAT_ON_TOP);
+  if (f.deal === 'buy' && f.vat === 'none') q = q.in('vat', VAT_NONE);
+  if (f.photosReady) q = q.eq('photo_verdict', 'ready');
+  else if (f.hideRejected) q = q.or(`photo_verdict.is.null,photo_verdict.not.in.(${PHOTO_REJECTED.join(',')})`);
+  if (f.days !== '') q = q.gte('first_seen_at', new Date(Date.now() - Number(f.days) * 86_400_000).toISOString());
+
+  const order = {
+    newest: ['first_seen_at', { ascending: false }],
+    price_asc: ['price', { ascending: true }],
+    price_desc: ['price', { ascending: false }],
+    ppsqm: ['price_per_sqm', { ascending: true, nullsFirst: false }],
+    sea: ['sea_km', { ascending: true, nullsFirst: false }],
+    yield: ['est_yield', { ascending: false, nullsFirst: false }],
+  }[f.sort];
+  return q.order(...order).order('id').range(offset, offset + PAGE_SIZE - 1);
+}
+
+async function fetchPage(reset) {
+  const id = ++requestId;
+  if (reset) {
+    loaded = [];
+    $('list').innerHTML = '';
+  }
   $('count').textContent = 'Загрузка…';
-  const rows = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db
-      .from('residential_listings')
-      .select(COLUMNS)
-      .eq('status', 'active')
-      .eq('listing_type', 'buy')
-      .eq('segment', 'apartment')
-      .gte('price', settings.pmin || 0)
-      .lte('price', settings.pmax || 1e9)
-      .not('est_rent', 'is', null)
-      .in('age_verdict', ['young', 'likely_young'])
-      .order('id')
-      .range(from, from + 999);
-    if (error) {
-      $('count').textContent = `Не удалось загрузить: ${error.message}`;
-      return;
-    }
-    rows.push(...data);
-    if (data.length < 1000) break;
+  $('more').hidden = true;
+  const { data, error, count: found } = await buildQuery(loaded.length);
+  if (id !== requestId) return;
+  if (error) {
+    $('count').textContent = `Не удалось загрузить: ${error.message}`;
+    return;
   }
-  listings = rows.map((l) => ({ ...l, price: +l.price, est_rent: +l.est_rent, sea_km: l.sea_km === null ? null : +l.sea_km }));
-  if (rows.length === 0) {
-    $('count').textContent = 'Нет данных. Если вы только вошли, проверьте, что ваша почта добавлена в app_users.';
-  }
-  renderChips();
+  total = found ?? 0;
+  loaded.push(...data.map((l) => ({ ...l, price: Number(l.price), est_rent: l.est_rent === null ? null : Number(l.est_rent) })));
   render();
 }
 
-async function priceHistory(id) {
-  const { data, error } = await db.from('residential_price_history').select('price,seen_at').eq('listing_id', id).order('seen_at');
+let refetchTimer = null;
+function refetchSoon() {
+  saveSettings();
+  clearTimeout(refetchTimer);
+  refetchTimer = setTimeout(() => fetchPage(true), REFETCH_DELAY_MS);
+}
+
+async function priceHistory(listingId) {
+  const { data, error } = await db
+    .from('residential_price_history')
+    .select('price,seen_at')
+    .eq('listing_id', listingId)
+    .order('seen_at');
   if (error) return `не удалось загрузить: ${esc(error.message)}`;
   if (data.length <= 1) return 'цена не менялась';
   return data.map((h) => `${eur.format(h.price)} (${new Date(h.seen_at).toLocaleDateString('ru-RU')})`).join(' → ');
 }
 
-// --- Filters ---------------------------------------------------------------------------
+const isRent = (l) => l.listing_type === 'rent';
+const isOffPlan = (l) => l.age_verdict === 'off_plan' || l.photo_verdict === 'off_plan';
+const isFresh = (l) => l.first_seen_at && Date.now() - Date.parse(l.first_seen_at) < NEW_LISTING_DAYS * 86_400_000;
+const seaText = (km) => (km === null ? '' : km < 1 ? `${Math.round(km * 10) * 100} м до моря` : `${String(Number(km).toFixed(1)).replace('.', ',')} км до моря`);
+const roomsText = (l) => (l.bedrooms === null ? '' : l.bedrooms === 0 ? 'студия' : `${l.bedrooms} спал.`);
 
-function visible() {
-  const sea = settings.sea === '' ? null : Number(settings.sea);
-  return listings
-    .filter((l) => (settings.cities === null || settings.cities.includes(l.city)))
-    .filter((l) => settings.beds.length === 0 || settings.beds.includes(String(Math.min(l.bedrooms ?? 0, 4))))
-    .filter((l) => sea === null || (l.sea_km !== null && l.sea_km <= sea))
-    .filter((l) => settings.likely || l.age_verdict === 'young')
-    .filter((l) => !settings.hideOffplan || !['off_plan', 'removed', 'old'].includes(l.photo_verdict))
-    .filter((l) => !settings.onlyReady || l.photo_verdict === 'ready')
-    .filter((l) => !settings.onlyBrandNew || l.condition === BRAND_NEW)
-    .map((l) => ({ ...l, ...evaluate(l) }))
-    .filter((l) => !settings.onlyCovered || l.surplus >= settings.minSurplus)
-    .sort({
-      surplus: (a, b) => b.surplus - a.surplus,
-      yield: (a, b) => b.yieldPct - a.yieldPct,
-      price: (a, b) => a.price - b.price,
-      sea: (a, b) => (a.sea_km ?? 99) - (b.sea_km ?? 99),
-      new: (a, b) => (b.first_seen_at ?? '').localeCompare(a.first_seen_at ?? ''),
-    }[settings.sort]);
+function stateTags(l) {
+  const tags = [];
+  if (isOffPlan(l)) tags.push(['warn', 'строится']);
+  else if (l.is_new_build) tags.push(['good', 'новостройка']);
+  else if (l.is_new_build === false) tags.push(['', 'вторичка']);
+  if (l.photo_verdict === 'ready') tags.push(['good', 'фото: готовая']);
+  if (l.photo_verdict === 'removed') tags.push(['warn', 'снято']);
+  if (l.photo_verdict === 'old') tags.push(['warn', 'фото: старая']);
+  if (l.pv === 'yes') tags.push(['good', '☀️ фотовольтаика']);
+  if (l.pv === 'provision') tags.push(['', '☀️ подготовка под фотовольтаику']);
+  if (isFresh(l)) tags.push(['good', 'новое объявление']);
+  return tags.map(([kind, text]) => `<span class="tag ${kind}">${text}</span>`).join('');
 }
 
-function chipGroup(el, options, isOn, toggle) {
+function priceBlock(l) {
+  if (isRent(l)) return `<span class="price">${eur.format(l.price)}<small>/мес</small></span>`;
+  if (!VAT_ON_TOP.includes(l.vat)) {
+    const note = l.vat === 'included' ? 'НДС включён / не взимается' : l.vat === 'likely_none' ? 'вероятно без НДС' : '';
+    return `<span class="price">${eur.format(l.price)}</span>${note ? `<span class="vat-note">${note}</span>` : ''}`;
+  }
+  const label = l.vat === 'plus' ? 'НДС сверху' : 'вероятно НДС сверху';
+  return `<span class="price">${eur.format(l.price)}</span>
+    <span class="vat-prices"><span class="vat-note">${label}:</span>
+      <span>с 5% <b class="num">${eur.format(l.price * 1.05)}</b></span>
+      <span>с 19% <b class="num">${eur.format(l.price * 1.19)}</b></span></span>`;
+}
+
+function mortgageBlock(l) {
+  if (isRent(l) || l.segment !== 'apartment' || l.est_rent === null) return '';
+  const m = mortgage(l);
+  const priceNote = m.price !== l.price ? ` от ${eur.format(m.price)}` : '';
+  return `<div class="money">
+    <span class="pill ${m.surplus >= 0 ? 'good' : 'bad'}">${m.surplus >= 0 ? '+' : '−'}${eur.format(Math.abs(m.surplus))}/мес</span>
+    <span>аренда ≈ <span class="num">${eur.format(l.est_rent)}</span> (${eur.format(l.est_rent_low)}–${eur.format(l.est_rent_high)}${l.est_basis === 'city' ? ', по городу' : ''})</span>
+    <span>платёж <span class="num">${eur.format(m.payment)}</span>${priceNote}</span>
+    <span>доходность ${m.yieldPct.toFixed(1).replace('.', ',')}%</span>
+  </div>`;
+}
+
+function card(l) {
+  const photo = l.photo_url
+    ? `<img src="${esc(l.photo_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+    : '<div class="no-photo">нет фото</div>';
+  const meta = [
+    `${esc(l.city)}${l.district ? `, ${esc(l.district)}` : ''}`,
+    esc(l.property_type ?? ''),
+    roomsText(l),
+    l.sqm ? `${Math.round(l.sqm)} м²` : '',
+    !isRent(l) && l.price_per_sqm ? `${eur.format(l.price_per_sqm)}/м²` : '',
+    l.build_year ? `${l.build_year} г.` : '',
+    seaText(l.sea_km),
+  ].filter(Boolean).map((s) => `<span>${s}</span>`).join('');
+  return `<article class="card">
+    <a class="thumb" href="${esc(l.url)}" target="_blank" rel="noopener">${photo}</a>
+    <div class="card-body">
+      <div class="card-head">
+        <a class="title" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title)}</a>
+        <div class="prices">${priceBlock(l)}</div>
+      </div>
+      <div class="meta">${meta}</div>
+      <div class="tags">${stateTags(l)}</div>
+      ${mortgageBlock(l)}
+      <div><button type="button" class="link" data-history="${l.id}">история цены</button></div>
+      <div class="history" id="h-${l.id}"></div>
+    </div>
+  </article>`;
+}
+
+function render() {
+  $('count').textContent = `Найдено ${count.format(total)}, показано ${count.format(loaded.length)}`;
+  $('list').innerHTML = loaded.length
+    ? loaded.map(card).join('')
+    : '<div class="empty">Ничего не найдено. Ослабьте фильтры.</div>';
+  $('more').hidden = loaded.length >= total;
+  if (map && !$('map').hidden) renderMap();
+}
+
+function renderMap() {
+  markers.clearLayers();
+  const points = [];
+  for (const l of loaded) {
+    if (l.lat === null || l.lng === null) continue;
+    points.push([l.lat, l.lng]);
+    L.circleMarker([l.lat, l.lng], { radius: 6, weight: 1, color: l.is_new_build ? '#1d7a3b' : '#0d6b66', fillOpacity: 0.7 })
+      .bindPopup(`<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title)}</a><br>${eur.format(l.price)}`)
+      .addTo(markers);
+  }
+  if (points.length) map.fitBounds(points, { padding: [20, 20], maxZoom: 14 });
+}
+
+function chipGroup(el, options, isOn, onToggle) {
   el.innerHTML = '';
   for (const [value, label] of options) {
     const b = document.createElement('button');
@@ -120,106 +255,60 @@ function chipGroup(el, options, isOn, toggle) {
     b.className = 'chip';
     b.textContent = label;
     b.setAttribute('aria-pressed', String(isOn(value)));
-    b.addEventListener('click', () => { toggle(value); saveSettings(); renderChips(); shown = PAGE; render(); });
+    b.addEventListener('click', () => {
+      onToggle(value);
+      renderChips();
+      refetchSoon();
+    });
     el.appendChild(b);
   }
 }
 
+const toggleIn = (list, value) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
+
 function renderChips() {
-  const cities = [...new Set(listings.map((l) => l.city))].sort();
-  if (settings.cities === null && cities.length) settings.cities = cities.filter((c) => c !== 'Nicosia');
-  chipGroup($('cities'), cities.map((c) => [c, c]), (c) => settings.cities?.includes(c), (c) => {
-    settings.cities = settings.cities.includes(c) ? settings.cities.filter((x) => x !== c) : [...settings.cities, c];
-  });
-  chipGroup($('beds'), [['0', 'студия'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4+']], (b) => settings.beds.includes(b), (b) => {
-    settings.beds = settings.beds.includes(b) ? settings.beds.filter((x) => x !== b) : [...settings.beds, b];
-  });
+  chipGroup($('segment'), [['apartment', 'Квартиры'], ['house', 'Дома']], (v) => filters.segment === v, (v) => { filters.segment = v; });
+  chipGroup($('deal'), [['buy', 'Продажа'], ['rent', 'Аренда']], (v) => filters.deal === v, (v) => { filters.deal = v; });
+  chipGroup($('cities'), CITIES.map((c) => [c, c]), (c) => filters.cities.includes(c), (c) => { filters.cities = toggleIn(filters.cities, c); });
+  chipGroup($('beds'), BEDROOM_CHOICES, (b) => filters.beds.includes(b), (b) => { filters.beds = toggleIn(filters.beds, b); });
+  $('vat').disabled = filters.deal === 'rent';
 }
 
-// --- Rendering -------------------------------------------------------------------------
+const FILTER_INPUTS = { district: 'district', sea: 'sea', pmin: 'pmin', pmax: 'pmax', smin: 'smin', smax: 'smax', year: 'year', days: 'days' };
+const FILTER_SELECTS = { condition: 'condition', pv: 'pv', vat: 'vat', sort: 'sort' };
+const FILTER_CHECKS = { 'photos-ready': 'photosReady', 'hide-rejected': 'hideRejected' };
+const CALC_INPUTS = { down: 'down', rate: 'rate', term: 'term', costs: 'costs', 'vat-rate': 'vatRate' };
 
-const seaText = (km) => (km === null ? '' : km < 1 ? `${Math.round(km * 10) * 100} м до моря` : `${km.toFixed(1).replace('.', ',')} км до моря`);
-const ageText = (l) => (l.build_year ? `${l.build_year} г.` : 'новое, год не указан');
-const photoTag = (v) =>
-  ({ ready: '<span class="tag good">фото: готовая</span>', off_plan: '<span class="tag warn">фото: строится</span>',
-     removed: '<span class="tag warn">снято</span>', old: '<span class="tag warn">фото: старая</span>' })[v] ??
-  '<span class="tag">фото не проверены</span>';
-const isNew = (l) => l.first_seen_at && Date.now() - Date.parse(l.first_seen_at) < 3 * 24 * 3600 * 1000;
-
-function card(l) {
-  const rooms = l.bedrooms === 0 ? 'студия' : `${l.bedrooms} спал.`;
-  return `<article class="card">
-    <div class="card-head">
-      <a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title)}</a>
-      <span class="price">${eur.format(l.price)}</span>
-    </div>
-    <div class="meta">
-      <span>${esc(l.city)}, ${esc(l.district ?? '')}</span><span>${rooms}, ${Math.round(l.sqm)} м²</span>
-      <span>${ageText(l)}</span><span>${seaText(l.sea_km)}</span>
-      ${photoTag(l.photo_verdict)}${l.condition === BRAND_NEW ? '<span class="tag good">новостройка</span>' : '<span class="tag">вторичка</span>'}${isNew(l) ? '<span class="tag good">новое</span>' : ''}
-    </div>
-    <div class="money">
-      <span class="pill ${l.surplus >= 0 ? 'good' : 'bad'}">${l.surplus >= 0 ? '+' : ''}${eur.format(l.surplus)}/мес</span>
-      <span>аренда ≈ <span class="num">${eur.format(l.est_rent)}</span> (${eur.format(l.est_rent_low)}–${eur.format(l.est_rent_high)}${l.est_basis === 'city' ? ', по городу' : ''})</span>
-      <span>платёж <span class="num">${eur.format(l.payment)}</span></span>
-      <span>доходность ${l.yieldPct.toFixed(1).replace('.', ',')}%</span>
-      <button type="button" class="link" data-history="${l.id}">история цены</button>
-    </div>
-    <div class="history" id="h-${l.id}"></div>
-  </article>`;
+function fillControls() {
+  for (const [id, key] of Object.entries({ ...FILTER_INPUTS, ...FILTER_SELECTS })) $(id).value = filters[key];
+  for (const [id, key] of Object.entries(FILTER_CHECKS)) $(id).checked = filters[key];
+  for (const [id, key] of Object.entries(CALC_INPUTS)) $(id).value = calc[key];
+  renderChips();
 }
 
-function render() {
-  const list = visible();
-  $('count').textContent = `${list.length} из ${listings.length} квартир в ценовом диапазоне`;
-  $('list').innerHTML = list.length
-    ? list.slice(0, shown).map(card).join('')
-    : '<div class="empty">Ничего не подходит. Ослабьте фильтры или поменяйте параметры ипотеки.</div>';
-  $('more').hidden = shown >= list.length;
-  if (map && !$('map').hidden) renderMap(list);
-}
-
-function renderMap(list) {
-  markers.clearLayers();
-  for (const l of list) {
-    if (l.lat === null || l.lng === null) continue;
-    L.circleMarker([l.lat, l.lng], {
-      radius: 6, weight: 1, color: l.surplus >= 0 ? '#1d7a3b' : '#a3361c', fillOpacity: 0.7,
-    })
-      .bindPopup(`<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title)}</a><br>${eur.format(l.price)} · ${l.surplus >= 0 ? '+' : ''}${eur.format(l.surplus)}/мес`)
-      .addTo(markers);
+function bindControls() {
+  for (const [id, key] of Object.entries({ ...FILTER_INPUTS, ...FILTER_SELECTS })) {
+    $(id).addEventListener('input', () => { filters[key] = $(id).value; refetchSoon(); });
   }
-}
-
-// --- Wiring ----------------------------------------------------------------------------
-
-function bindInputs() {
-  const fields = { down: 'down', rate: 'rate', term: 'term', costs: 'costs', pmin: 'pmin', pmax: 'pmax', sea: 'sea', 'min-surplus': 'minSurplus' };
-  let refetch = null;
-  for (const [id, key] of Object.entries(fields)) {
-    $(id).value = settings[key];
+  for (const [id, key] of Object.entries(FILTER_CHECKS)) {
+    $(id).addEventListener('change', () => { filters[key] = $(id).checked; refetchSoon(); });
+  }
+  for (const [id, key] of Object.entries(CALC_INPUTS)) {
     $(id).addEventListener('input', () => {
-      settings[key] = id === 'sea' ? $(id).value : Number($(id).value);
+      calc[key] = key === 'vatRate' ? $(id).value : Number($(id).value);
       saveSettings();
-      if (id === 'pmin' || id === 'pmax') {
-        clearTimeout(refetch);
-        refetch = setTimeout(fetchListings, 600);
-      } else {
-        shown = PAGE;
-        render();
-      }
+      render();
     });
   }
-  for (const [id, key] of [['only-covered', 'onlyCovered'], ['hide-offplan', 'hideOffplan'], ['likely', 'likely'], ['only-ready', 'onlyReady'], ['only-brand-new', 'onlyBrandNew']]) {
-    $(id).checked = settings[key];
-    $(id).addEventListener('change', () => { settings[key] = $(id).checked; saveSettings(); shown = PAGE; render(); });
-  }
-  $('sort').value = settings.sort;
-  $('sort').addEventListener('change', () => { settings.sort = $('sort').value; saveSettings(); render(); });
-  $('more').addEventListener('click', () => { shown += PAGE; render(); });
+  $('reset').addEventListener('click', () => {
+    filters = { ...DEFAULT_FILTERS };
+    fillControls();
+    refetchSoon();
+  });
+  $('more').addEventListener('click', () => fetchPage(false));
   $('list').addEventListener('click', async (e) => {
-    const id = e.target?.dataset?.history;
-    if (id) $(`h-${id}`).innerHTML = await priceHistory(id);
+    const listingId = e.target?.dataset?.history;
+    if (listingId) $(`h-${listingId}`).innerHTML = await priceHistory(listingId);
   });
   $('toggle-map').addEventListener('click', () => {
     $('map').hidden = !$('map').hidden;
@@ -244,16 +333,16 @@ async function start() {
   $('who').textContent = session?.user?.email ?? '';
   if (!session || started) return;
   started = true;
-  bindInputs();
-  fetchListings();
+  fillControls();
+  bindControls();
+  fetchPage(true);
 }
 
 $('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const email = $('email').value.trim();
   $('login-msg').textContent = 'Отправляем…';
   const { error } = await db.auth.signInWithOtp({
-    email,
+    email: $('email').value.trim(),
     options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: true },
   });
   $('login-msg').textContent = error ? `Не получилось: ${error.message}` : 'Ссылка отправлена. Откройте письмо на этом устройстве.';
