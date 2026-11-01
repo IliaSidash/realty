@@ -10,13 +10,14 @@ const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const DEFAULTS = {
   down: 30, rate: 5, term: 25, costs: 20, pmin: 150000, pmax: 300000, sea: '', minSurplus: -100,
-  cities: null, beds: [], onlyCovered: true, hideOffplan: true, likely: true, onlyReady: false, sort: 'surplus',
+  cities: null, beds: [], onlyCovered: true, hideOffplan: true, likely: true, onlyReady: false, onlyBrandNew: true, sort: 'surplus',
 };
 const PAGE = 40;
 const SETTINGS_KEY = 'settings-v2';
+const BRAND_NEW = '10';
 const COLUMNS =
   'id,title,price,sqm,bedrooms,city,district,url,lat,lng,est_rent,est_rent_low,est_rent_high,est_basis,' +
-  'sea_km,build_year,age_verdict,photo_verdict,first_seen_at';
+  'sea_km,build_year,age_verdict,photo_verdict,first_seen_at,condition:attrs->>attrs__condition';
 
 const $ = (id) => document.getElementById(id);
 const eur = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
@@ -99,6 +100,7 @@ function visible() {
     .filter((l) => settings.likely || l.age_verdict === 'young')
     .filter((l) => !settings.hideOffplan || !['off_plan', 'removed', 'old'].includes(l.photo_verdict))
     .filter((l) => !settings.onlyReady || l.photo_verdict === 'ready')
+    .filter((l) => !settings.onlyBrandNew || l.condition === BRAND_NEW)
     .map((l) => ({ ...l, ...evaluate(l) }))
     .filter((l) => !settings.onlyCovered || l.surplus >= settings.minSurplus)
     .sort({
@@ -154,7 +156,7 @@ function card(l) {
     <div class="meta">
       <span>${esc(l.city)}, ${esc(l.district ?? '')}</span><span>${rooms}, ${Math.round(l.sqm)} м²</span>
       <span>${ageText(l)}</span><span>${seaText(l.sea_km)}</span>
-      ${photoTag(l.photo_verdict)}${isNew(l) ? '<span class="tag good">новое</span>' : ''}
+      ${photoTag(l.photo_verdict)}${l.condition === BRAND_NEW ? '<span class="tag good">новостройка</span>' : '<span class="tag">вторичка</span>'}${isNew(l) ? '<span class="tag good">новое</span>' : ''}
     </div>
     <div class="money">
       <span class="pill ${l.surplus >= 0 ? 'good' : 'bad'}">${l.surplus >= 0 ? '+' : ''}${eur.format(l.surplus)}/мес</span>
@@ -208,7 +210,7 @@ function bindInputs() {
       }
     });
   }
-  for (const [id, key] of [['only-covered', 'onlyCovered'], ['hide-offplan', 'hideOffplan'], ['likely', 'likely'], ['only-ready', 'onlyReady']]) {
+  for (const [id, key] of [['only-covered', 'onlyCovered'], ['hide-offplan', 'hideOffplan'], ['likely', 'likely'], ['only-ready', 'onlyReady'], ['only-brand-new', 'onlyBrandNew']]) {
     $(id).checked = settings[key];
     $(id).addEventListener('change', () => { settings[key] = $(id).checked; saveSettings(); shown = PAGE; render(); });
   }
